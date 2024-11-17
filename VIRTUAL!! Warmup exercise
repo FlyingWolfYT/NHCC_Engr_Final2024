@@ -1,0 +1,197 @@
+
+// Pin Definitions
+const int redLED = 12;  // Red LED pin
+const int ledPins[] = {11, 10, 9, 8}; // White, Green, Blue, Yellow LEDs
+const int buttonPins[] = {7, 5, 3, 2}; // Button pins
+
+// Button Names for Debugging
+const char* buttonNames[] = {"White Button", "Green Button", "Blue Button", "Yellow Button"};
+
+int buttonPressCount = 0;  // Correct button press count
+bool gameActive = false;   // Game state
+int selectedLED = -1;      // Currently selected LED to match with button
+unsigned long lastPressTime = 0; // For checking timeout (2 seconds)
+unsigned long debounceDelay = 200;  // Debounce delay in milliseconds
+unsigned long lastDebounceTime[4] = {0, 0, 0, 0};  // Track debounce for each button
+unsigned long buttonCooldown = 250;  // Delay between valid button presses (250ms)
+int lastPressedButton = -1; // Track last button pressed (for comparison)
+int lastLED = -1; // Track the last LED that was lit up (for flashing behavior)
+
+void setup() {
+  Serial.begin(9600);  // Initialize serial communication
+  delay(2000);  // Wait for the Serial Monitor to open
+
+  pinMode(redLED, OUTPUT);  // Set red LED pin as OUTPUT
+  for (int i = 0; i < 4; i++) {
+    pinMode(ledPins[i], OUTPUT);  // Set top LED pins as OUTPUT
+    pinMode(buttonPins[i], INPUT);  // Button pins as INPUT (use external pull-down resistors)
+  }
+
+  // Turn off all LEDs at the start
+  for (int i = 0; i < 4; i++) {
+    digitalWrite(ledPins[i], LOW);  // Turn all LEDs off
+  }
+  digitalWrite(redLED, LOW);  // Red LED off (waiting for button press)
+  Serial.println("Waiting for button press to start the game...");
+}
+
+void loop() {
+  // Flash the red LED until a button is pressed to start the game
+  flashRedLED();
+
+  // Check if any button is pressed (active HIGH)
+  if (!gameActive && isButtonPressed()) {
+    gameActive = true;  // Set the game as active once a button is pressed
+    buttonPressCount = 0;  // Reset button press count
+    Serial.println("Game Started!");
+    delay(500);  // Debounce delay
+  }
+
+  if (gameActive) {
+    // Start a round of the game
+    playGame();
+  }
+}
+
+// Flash the red LED at 1Hz until the game starts
+void flashRedLED() {
+  static unsigned long previousMillis = 0;
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= 500) {
+    previousMillis = currentMillis;
+    digitalWrite(redLED, !digitalRead(redLED));  // Toggle the red LED
+  }
+}
+
+// Check if any button is pressed (active HIGH) and debounce logic
+bool isButtonPressed() {
+  for (int i = 0; i < 4; i++) {
+    int reading = digitalRead(buttonPins[i]);
+
+    // If the button has been pressed and it's not bouncing
+    if (reading == HIGH && (millis() - lastDebounceTime[i]) > debounceDelay) {
+      lastDebounceTime[i] = millis();  // Reset debounce timer
+
+      // Print message only once when a button is pressed
+      Serial.print(buttonNames[i]);
+      Serial.println(" Pressed");
+
+      // Add a cooldown period between button presses to avoid registering too many presses
+      delay(buttonCooldown);  // Wait for the cooldown period before allowing another press
+
+      return true;  // A button is pressed
+    }
+  }
+  return false;  // No button pressed
+}
+
+// Game logic for playing
+void playGame() {
+  // Randomly select a LED to turn on
+  selectedLED = random(0, 4);
+
+  // If the same LED is selected as the previous one, flash it briefly
+  if (selectedLED == lastLED) {
+    Serial.println("Same LED selected, flashing it briefly.");
+    flashLED(selectedLED);
+  }
+
+  // Turn on the selected LED
+  digitalWrite(ledPins[selectedLED], HIGH);  // Turn on the selected LED
+  Serial.print("LED ");
+  Serial.print(buttonNames[selectedLED]);
+  Serial.println(" is ON.");
+
+  lastPressTime = millis(); // Reset the timer
+  lastLED = selectedLED;  // Store the selected LED for the next round
+
+  while (millis() - lastPressTime < 2000) {  // Wait for button press or timeout (2 seconds)
+    for (int i = 0; i < 4; i++) {
+      int buttonState = digitalRead(buttonPins[i]);
+
+      // Only print when button state changes (from not pressed to pressed)
+      static int lastButtonState[4] = {LOW, LOW, LOW, LOW};  // To track last button state
+
+      if (buttonState != lastButtonState[i]) {
+        lastButtonState[i] = buttonState;  // Update last button state
+
+        if (buttonState == HIGH) {  // Button is pressed
+          Serial.print(buttonNames[i]);
+          Serial.println(" is Pressed.");
+
+          // Check if the pressed button is the correct one
+          if (i == selectedLED) {  // Correct button pressed
+            Serial.println("Correct button pressed!");
+            digitalWrite(ledPins[selectedLED], LOW);  // Turn off the LED
+            buttonPressCount++;  // Increment correct button press count
+            checkWin();  // Check for win condition
+            lastLED = selectedLED;  // Store the last LED
+            return;  // Exit and start next round
+          } else if (i == lastPressedButton) {
+            // Same button pressed consecutively
+            Serial.println("Same button pressed twice, turning off and on the LED.");
+            digitalWrite(ledPins[selectedLED], LOW);  // Turn off LED
+            delay(500);  // Wait for 0.5 seconds
+            digitalWrite(ledPins[selectedLED], HIGH);  // Turn LED back on
+            return;  // Wait for next correct press
+          } else {
+            // Incorrect button pressed
+            Serial.println("Incorrect button press!");
+            loseSequence();  // Trigger lose sequence
+            return;  // Exit after losing
+          }
+        }
+      }
+    }
+  }
+
+  // If no button is pressed within 2 seconds, it's a loss
+  Serial.println("Time's up or wrong button. Lose sequence!");
+  loseSequence();
+}
+
+// Flash the LED for 0.5 seconds (flash it off and on)
+void flashLED(int ledIndex) {
+  digitalWrite(ledPins[ledIndex], LOW);  // Turn off LED
+  delay(250);  // Wait for 0.25 seconds
+  digitalWrite(ledPins[ledIndex], HIGH);  // Turn LED back on
+  delay(250);  // Wait for 0.25 seconds
+}
+
+// Lose sequence (all LEDs light up one by one)
+void loseSequence() {
+  Serial.println("Lose sequence triggered!");
+  for (int i = 0; i < 4; i++) {
+    digitalWrite(ledPins[i], HIGH);  // Turn on LED
+    delay(1000);  // Wait for 1 second for each LED
+    digitalWrite(ledPins[i], LOW);  // Turn off LED
+  }
+  delay(4000);  // Wait for 4 seconds before restarting
+  gameActive = false;  // End the game
+}
+
+// Win sequence (all LEDs flash at 2Hz for 4 seconds)
+void winSequence() {
+  Serial.println("Win sequence triggered!");
+  unsigned long endTime = millis() + 4000; // 4 seconds duration
+  while (millis() < endTime) {
+    for (int i = 0; i < 4; i++) {
+      digitalWrite(ledPins[i], HIGH); // Turn on all LEDs
+    }
+    delay(250); // Half a second ON
+    for (int i = 0; i < 4; i++) {
+      digitalWrite(ledPins[i], LOW); // Turn off all LEDs
+    }
+    delay(250); // Half a second OFF
+  }
+  gameActive = false; // End the game
+}
+
+// Check if the player has won (6 correct presses)
+void checkWin() {
+  if (buttonPressCount >= 6) {
+    winSequence();  // Trigger win sequence
+  } else {
+    // Continue with the game
+  }
+}
